@@ -453,7 +453,7 @@ if (num_set == 1 and num_challenge == 7):
 	'''
 	my_file = open("set1challenge7.txt","r")
 	content = base64.b64decode(my_file.read())
-	print("Decrypted:",AES_decrypt(content,"YELLOW SUBMARINE",AES.MODE_ECB))
+	print("Decrypted:",AES_ECB_decrypt(content,"YELLOW SUBMARINE"))
 
 #Test challenge8.
 if (num_set == 1 and num_challenge == 8):
@@ -482,6 +482,9 @@ def PKCS7(plaintext,blocksize):
 	remaining = int(num_blocks * blocksize - len(plaintext))
 	if (remaining != 0):
 		plaintext += chr(remaining) * remaining
+	else:
+		#Add full block of value blocksize.
+		plaintext += chr(blocksize) * blocksize
 	return plaintext
 
 
@@ -835,13 +838,10 @@ def PKCS7_validation(text):
 	Input:Some text.
 	Output:The same text without the PKCS7 padding.
 	'''
-	if(len(text) % BLOCKSIZE != 0):
-		#This isn't even dividable by blocksize.
-		raise ValueError("Invalid PKCS#7 padding.")
 	padding_val = ord(text[len(text) - 1])
-	if (padding_val > BLOCKSIZE - 1):
-		#There is no padding applied,max value for PKCS#7 is 15.
-		return text
+	if (padding_val > BLOCKSIZE):
+		#Invalid padding
+		raise ValueError("This padding is invalid")
 	for i in range(1,padding_val):
 		if (text[len(text) - 1 - i] != chr(padding_val)):
 			raise ValueError("Invalid PKCS#7 padding.")
@@ -938,3 +938,101 @@ if (num_set == 2 and num_challenge == 8):
 	print (admin_verifier(cipher,unknown_key,iv))
 	target_block = ";admin=true;" + chr(4) * 4
 	cbc_bitflip_attack(unknown_key,iv,target_block)
+
+#Save list of strings.
+my_strings = ["MDAwMDAwTm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmc=",
+				"MDAwMDAxV2l0aCB0aGUgYmFzcyBraWNrZWQgaW4gYW5kIHRoZSBWZWdhJ3MgYXJlIHB1bXBpbic=",
+				"MDAwMDAyUXVpY2sgdG8gdGhlIHBvaW50LCB0byB0aGUgcG9pbnQsIG5vIGZha2luZw==",
+				"MDAwMDAzQ29va2luZyBNQydzIGxpa2UgYSBwb3VuZCBvZiBiYWNvbg==",
+				"MDAwMDA0QnVybmluZyAnZW0sIGlmIHlvdSBhaW4ndCBxdWljayBhbmQgbmltYmxl",
+				"MDAwMDA1SSBnbyBjcmF6eSB3aGVuIEkgaGVhciBhIGN5bWJhbA==",
+				"MDAwMDA2QW5kIGEgaGlnaCBoYXQgd2l0aCBhIHNvdXBlZCB1cCB0ZW1wbw==",
+				"MDAwMDA3SSdtIG9uIGEgcm9sbCwgaXQncyB0aW1lIHRvIGdvIHNvbG8=",
+				"MDAwMDA4b2xsaW4nIGluIG15IGZpdmUgcG9pbnQgb2g=",
+				"MDAwMDA5aXRoIG15IHJhZy10b3AgZG93biBzbyBteSBoYWlyIGNhbiBibG93"]
+
+
+def enc_string(key):
+	'''
+	This function will use the unknown_key variable which is a random key that is 
+	generated in each execution of the program to encrypt one of the following strings
+	in the list my_strings.
+	Input:None.
+	Output:The ciphertext and the iv that we used.
+	'''
+	#Generate some random iv.
+	iv = os.urandom(BLOCKSIZE)
+	#Choose a string randomly.
+	chosen_str = base64.b64decode(my_strings[random.randint(0,len(my_strings) - 1)])
+	#Use the encryption in CBC that we wrote.Return ciphertext and the iv.
+	return AES_CBC_enc(chosen_str,key,iv),iv
+
+def padding_oracle(ciphertext,key,iv):
+	'''
+	In this padding_oracle function we will decrypt the following ciphertext using the AES_CBC_dec function 
+	that we wrote,than we will use the PKCS7_validation function to check whether the padding that is applied
+	to the plaintext that was produced is correct.
+	Input:The ciphertext and key and iv that were used during the encryption.
+	Output:True if the padding is valid,False otherwise.
+	'''
+	plaintext = AES_CBC_dec(ciphertext,key,iv)
+	print len(plaintext)
+	try:
+		no_padding_plaintext = PKCS7_validation(plaintext)
+		return True
+	except ValueError,IndexError:
+		return False
+
+def oracle_attack(ciphertext,key,iv):
+	'''
+	Implementation of the padding oracle attack. We will find the value of the intermediate state of
+	each block at each time and then use it to find the plaintext block.
+	'''
+	num_blocks = len(ciphertext) / BLOCKSIZE
+	plaintext = ""
+	prev_block = iv
+	for i in range(num_blocks):
+		print "Current: %d ciphertext length:%d" % (i,len(ciphertext))
+		target_block = extract_keysize_block(ciphertext,i + 1,BLOCKSIZE)
+		curr_intermediate = ""
+		calculated_bytes = ""
+		for j in range(BLOCKSIZE):
+			#Create the edited ciphertext:consists of edited block and the target block that we wish to decrypt.
+			print "Current j:%d" % j
+			for k in range(256):
+				#print "Calculated bytes length:%d" % len(calculated_bytes)
+				edited_ciphertext = os.urandom(BLOCKSIZE - 1 - j) +  chr(k) +\
+								calculated_bytes + target_block
+				#print "Length of edited ciphertext:%d" % len(edited_ciphertext)
+				#Test if padding is valid.
+				if (padding_oracle(edited_ciphertext,key,iv)):
+					#Ij = Pj ^Cj-1,use that calculation and the probability that valid padding gives value of
+					#last byte of Pj
+					curr_intermediate = chr((j + 1) ^ k) + curr_intermediate
+					print("CURRENT INTERMEDIATE:",len(curr_intermediate))
+					break
+			#Calculate the bytes needed to find next byte.
+			calculated_bytes = xor_strings(curr_intermediate,chr(j + 2) * len(curr_intermediate))
+		#When full intermediate block is found find plaintext.
+		plaintext += xor_strings(curr_intermediate,prev_block)
+		print "Current plaintext:%s" % plaintext
+		prev_block = target_block
+
+
+
+
+
+#Test challenge17.
+if (num_set == 3 and num_challenge == 1):
+	'''
+	Padding oracle attack.
+	For deep explanation of how this works see: https://robertheaton.com/2013/07/29/padding-oracle-attack/
+	'''
+	my_iv = os.urandom(16)
+	ciph = AES_CBC_enc("liorliorliorli",unknown_key,my_iv)
+	print "Decryption:%s" % AES_CBC_dec(ciph,unknown_key,my_iv)
+	print "Cipher:%s" % ciph
+	print padding_oracle(ciph,unknown_key,my_iv)
+	ciphertext,iv = enc_string(unknown_key)
+	print "The ciphertext: %s" % ciphertext
+	oracle_attack(ciphertext,unknown_key,iv)
