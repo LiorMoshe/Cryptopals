@@ -12,6 +12,7 @@ import os
 import json
 import sys
 import random
+import struct
 from collections import OrderedDict
 
 '''This dictionary will hold all statistical information about frequency of letters and their combinations
@@ -73,7 +74,8 @@ common_digraphs = {
 	'AS':4/27,
 	'DE':3/27,
 	'RT':2/27,
-	'VE':1/27
+	'VE':1/27,
+	'QU':1/54
 }
 
 common_trigraphs = {
@@ -308,9 +310,7 @@ def extract_keysize_block(text,num_block,keysize):
 	'''
 	Simple function, just makes the code more readable.
 	'''
-	if (num_block * keysize > len(text)):
-		raise ValueError("num_block is too high in extract_keysize_block")
-	return text[(num_block - 1) * keysize: num_block * keysize]
+	return text[(num_block - 1) * keysize: min(num_block * keysize,len(text))]
 
 
 
@@ -1037,3 +1037,218 @@ if (num_set == 3 and num_challenge == 1):
 	#Produce a plaintext of some string.
 	ciphertext,iv = enc_string(unknown_key)
 	print "Result of padding oracle attack: %s" % oracle_attack(ciphertext,unknown_key,iv)
+
+def get_numblocks(plaintext,BLOCKSIZE):
+	'''
+	Just because it's annoying to write the same line over and OVER AGAIN.
+	'''
+	return int(math.ceil(float(len(plaintext)) / BLOCKSIZE))
+
+
+def AES_CTR(plaintext,key,nonce):
+	'''
+	Implementation of the encryption/decryption process in AES-CTR block cipher mode,this mode
+	turns the block cipher AES encryption to a stream cipher,we will use the given nonce and
+	increment_counter function to create the key stream.
+	Use the struct.pack function to increment the counter(saves some code).
+	Note:The format that we will use for the total 16 byte counter is:
+		64 bit unsigned little endian nonce(given as input),
+		64 bit little endian count(incremented by increment_counter function).
+	Inputs:
+		- plaintext: The plaintext that we will encrypt.
+		- key: The key that will be used in the creation of the keystream.
+		- nonce: The value that will be used for the toal counter.
+	Output:
+		- The produced ciphertext.(or plaintext cause encryption and decryption are the same)
+	'''
+	counter = struct.pack("<Q",0)
+	#Get number of blocks of plaintext.
+	num_blocks = get_numblocks(plaintext,BLOCKSIZE)
+	ciphertext = ""
+	#Produce ciphertext blocks.
+	for i in range(num_blocks):
+		keystream = AES_ECB_encrypt(key,nonce + counter)
+		#Xor keystream with current block.
+		ciphertext += xor_strings(extract_keysize_block(plaintext,i + 1,BLOCKSIZE),keystream)
+		#Increment counter
+		counter = struct.pack("<Q",i + 1)
+	return ciphertext
+
+
+#Test challenge18.
+if (num_set == 3 and num_challenge == 2):
+	'''
+	In this challenge we will implement CTR block cipher mode.(Counter mode)
+	CTR mode is an AES block cipher mode that turns AES into a stream cipher.
+	Instead of encrypting the plaintext we will encrypt something called a "keystream",
+	we will have a "stream" of keys at each block encryption,each plaintet block will be xored 
+	with the currently produced keystream,the keystream will be produced by a counter function,for each
+	block of the plaintext we will use the counter function and AES encryption to receive the current keystream
+	and then xor it with the current plaintext block to receive the ciphertext block.
+	Another important property of CTR mode is that it doesn't require any padding.
+	Note:The format that I rely on while writing CTR mode is that we are working in a system
+	that uses little-endian scheme and the keystream is used both with a counter that is
+	incremented and with a nonce.
+	'''
+	#This is the ciphertext that we are given in the challenge.
+	plaintext = "liortheking" * 10
+	ciphertext = AES_CTR(plaintext,"YELLOW SUBMARINE",struct.pack("<Q",8))
+	print("The ciphertext:",ciphertext)
+	print("After decryption:",AES_CTR(ciphertext,"YELLOW SUBMARINE",struct.pack("<Q",8)))
+
+
+def find_first_byte(ciphertexts):
+	'''
+	We will use this function to find the first byte of the keystream that was used to encrypt
+	the folllowing ciphertexts,we will rely on the fact that in english sentences begin with a capital letter.
+	Input:
+		- ciphertexts: A list of the ciphertexts that were produced with the keystream.
+	Output:
+		- The byte that creates plaintexts that begin with a capital letter.
+	'''
+	buff = os.urandom(15)
+	for i in range(256):
+		keystream = chr(i) + buff
+		valid = True
+		for j in range(len(ciphertexts)):
+			result = xor_strings(ciphertexts[j],keystream)
+			#Check for capital letter.
+			if (not (ord(result[0]) >=65 and ord(result[0]) <= 90)):
+				#Set bool variable
+				valid = False
+		if (valid):
+			#Meaning that the result was that all plaintexts started with a capital letter.
+			first_byte = i
+			return i
+
+def find_byte(ciphertexts,found,curr_keys):
+	'''
+	In this function we will find one byte of the keystream by using the previous bytes that we found and a
+	list of english phrases that have a high probability to appear in the plaintexts(these are guesses that
+		were produced by checking out the input of the letters of the plaintexts that we found out so far).
+	Inputs:
+		- ciphertexts: The list of ciphertexts that were produced by using the same keystream.
+		- found: The bytes of the keystream that were found so far.
+		- curr_keys: The phrases that we expect to show up in the plaintexts with high probability.
+	Output:
+		- The byte that got the highest score based on the scoring system that we created with curr_keys.
+	'''
+	max_score = 0
+	for i in range(256):
+		score = 0
+		keystream = found + chr(i)
+		for j in range(len(ciphertexts)):
+			result = xor_strings(keystream,ciphertexts[j])
+			if (result in curr_keys):
+				score += 1
+
+		#Check the score.
+		if (score > max_score):
+			max_score = score
+			found_byte = i
+	#Return max result.
+	return found_byte
+	
+#Test challenge19.
+if (num_set == 3 and num_challenge == 3):
+	'''
+	Break Fixed-nonce CTR mode using substitutions.
+	We will use the encrypt and decrypt functions of AES in CTR mode that we wrote earlier with a nonce
+	set to 0.
+	In the file set3challenge3.txt there is a list of base64 encoded plaintexts,we will encrypt all of them
+	one by one and get a list of ciphertexts.
+	The flaw in this way of CTR encrpytion is that the nonce was FIXED.The nonce wasn't randomized so we
+	encrypted all of the plaintext with the SAME KEYSTREAM.
+	Now we know that after the calculation of the keystream during the encryption,the stream cipher operation
+	boils down to a simple xor operation with the plaintext block,so once we found the key stream we can
+	find the whole plaintext.
+	We will find the keystream by using several english statistics and a scoring system for english texts
+	on the produces ciphertexts for each key stream that we guess.
+	Note:We will use a random AES key(here it's the variable unknown_key) for the encryption process.
+	'''
+	my_file = file("set3challenge3.txt","r")
+	#Read plaintexts.
+	plaintexts = [curr_str.replace("\n","") for curr_str in my_file.readlines()]
+	ciphertexts = []
+	fixed_nonce = struct.pack("<Q",8)
+	#Compute all the ciphertexts.
+	for i in range(len(plaintexts)):
+		ciphertexts.append(AES_CTR(base64.b64decode(plaintexts[i]),unknown_key,fixed_nonce))
+
+	'''
+	We will crack the keystream blocks one step at a time.
+	Each block is 16 bytes,which takes up to (2^8)^16 options,it is unfeasible to go
+	over all of them.
+	First step:Find the first byte of the key stream by find the byte that leads to
+	that all the plaintexts start with a capital letter.
+	Second step:Use digraphs statistics to find the second letter.
+	Continue for each letter. (There are 30+ letters so because it's not automated it can be
+		a bit painful)
+	Note: This is code is NOT automated,the way the combinations of letters of each length was built
+	is by looking at the decrypted info that we got and guessing the next fitting letter,for example:
+	if after decrypting 3 bytes we get the combination "Wha" a valid guess would be that the next letter
+	would be 't' and we would receive "What".
+	'''
+
+	keystream = chr(find_first_byte(ciphertexts))
+	#Find second byte.
+	digraphs = [digraph.title() for digraph in common_digraphs.keys()]
+	#Add some digraphs.
+	digraphs += ['Of','So','Or','To','He','In','Wa','A ','I ','Po','Be','Ar']
+	trigraphs = [trigraph.title() for trigraph in common_trigraphs.keys()]
+	trigraphs += ['And','Thi','Com','But','All','She','Yet','Wha','Whe']
+	four_letter_combos = ["What","This","When","Unti","From",'Comi','Bein',]
+	five_letter_combos = ["Until","Being","Around","Comin","I hav"]
+	six_letter_combos = ["I have","Coming"]
+	seven_letter_combos = ["Eightee","A terri"]
+	eight_letter_combos = ["Eighteen","He might","Transfor","He might"]
+	nine_letter_combos = ["A terribl","Eighteent","Transform"]
+	ten_letter_combos = ["A terrible","Eighteenth","Transforme","What voice","Until her "]
+	eleven_letters = ["Coming with","Eighteenth-","I have pass"]
+	twelve_letters = ["Yet I number"]
+	thirteen_letters = ["In the casual","He might have"]
+	fourteen_letters = ["Until her voic"]
+	fifteen_letters = ["Until her voice","I have met them"]
+	sixteen_letters = ["A terrible beaut"]
+	seventeen_letters = ["Coming with vivid","A terrible beauty"]
+	eighteen_letters = ["Eighteenth-century"]
+	nineteen_letters = ["So daring and sweet"]
+	twenty_letters = ["Or polite meaningles"]
+	twentyone_letters = ["Or polite meaningless","He, too, has resigned"]
+	twentytwo_letters = ["When young and beautif"]
+	twentythree_letters = ["When young and beautifu"]
+	twentyfour_letters = ["When young and beautiful"]
+	twentyfive_letters = ["And rode our winged horse"]
+	twentysix_letters = ["From counter or desk among"]
+	twentyseven_letters = ["He had done most bitter wro"]
+	twentyeight_letters = ["This other man I had dreamed"]
+	twentynine = ["He had done most bitter wrong"]
+	thirty = ["So sensitive his nature seemed"]
+	thirtyone = ["I have passed with a nod of the"]
+	thirtytwo = ["Or have lingered awhile and said"]
+	thirtythree = ["He might have won fame in the end"]
+	thirtyfour = ["I have passed with a nod of the he"]
+	thirtyfive = ["I have passed with a nod of the hea"]
+	thirtysix = ["I have passed with a nod of the head"]
+	thirtyseven = ["He, too, has been changed in his turn"]
+	thirtyeight = ["He, too, has been changed in his turn."]
+	combos = [digraphs,trigraphs,four_letter_combos,five_letter_combos,six_letter_combos,seven_letter_combos\
+					,eight_letter_combos,nine_letter_combos,ten_letter_combos,eleven_letters,twelve_letters\
+					,thirteen_letters,fourteen_letters,fifteen_letters,sixteen_letters,seventeen_letters\
+					,eighteen_letters,nineteen_letters,twenty_letters,twentyone_letters,twentytwo_letters\
+					,twentythree_letters,twentyfour_letters,twentyfive_letters,twentysix_letters,\
+						twentyseven_letters,twentyeight_letters,twentynine,thirty,thirtyone,thirtytwo\
+						,thirtythree,thirtyfour,thirtyfive,thirtysix,thirtyseven,thirtyeight]
+					
+	for i in range(1,len(combos) + 1):
+		keystream += chr(find_byte(ciphertexts,keystream,combos[i - 1]))
+	#Review results.
+	print "Printing substitution attack results"
+	for i in range(len(ciphertexts)):
+		result = xor_strings(ciphertexts[i],keystream)
+		print "Ciphertext length:%d result length:%d" % (len(ciphertexts[i]),len(result))
+		print "Result:%d String: %s" % (i,result)
+	#Print the plaintexts for comparison.
+	print "Printing plaintexts"
+	for i in range(len(plaintexts)):
+		print "Num: %d Plaintext:%s" % (i,base64.b64decode(plaintexts[i]))
