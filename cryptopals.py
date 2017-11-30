@@ -13,6 +13,7 @@ import json
 import sys
 import random
 import struct
+import time
 from collections import OrderedDict
 
 '''This dictionary will hold all statistical information about frequency of letters and their combinations
@@ -890,6 +891,7 @@ def admin_verifier(ciphertext,key,iv):
 
 def cbc_bitflip_attack(key,iv,target_block):
 	'''
+	Implementation of CBC bitflipping attack.
 	'''
 	#First let's compute the number of blocks of the prepended string(I'm assuming the attacker doesn't know
 		# the value of the prepended string)
@@ -1148,7 +1150,7 @@ def find_byte(ciphertexts,found,curr_keys):
 			found_byte = i
 	#Return max result.
 	return found_byte
-	
+
 #Test challenge19.
 if (num_set == 3 and num_challenge == 3):
 	'''
@@ -1252,3 +1254,483 @@ if (num_set == 3 and num_challenge == 3):
 	print "Printing plaintexts"
 	for i in range(len(plaintexts)):
 		print "Num: %d Plaintext:%s" % (i,base64.b64decode(plaintexts[i]))
+
+#Test challenge20.
+if (num_set == 3 and num_challenge == 4):
+	'''
+	Break fixed-nonce CTR with statistics.
+	'''
+	my_file = file("set3challenge4.txt","r")
+	plaintexts = [curr_str.replace("\n","") for curr_str in my_file.readlines()]
+	ciphertexts = []
+	smallest_length = sys.maxint
+	for i in range(len(plaintexts)):
+		curr_cipher = AES_CTR(base64.b64decode(plaintexts[i]),unknown_key,struct.pack("<Q",8))
+		ciphertexts.append(curr_cipher)
+		if (len(curr_cipher) < smallest_length):
+			smallest_length = len(curr_cipher)
+
+	#Now use the smallest length to truncate all ciphertexts.
+	#Strings are immutable in python so we will have to create a new string.
+	final_str = ""
+	for i in range(len(ciphertexts)):
+		final_str += ciphertexts[i][:smallest_length]
+
+	#Now break as repeating key xor.Same as challenge 6.
+	key = break_repeating_xor(final_str,smallest_length)
+	print("Produced ciphertexts:",repeating_xor_key(final_str,key))
+	#After this is solved there is not much more work left to do.
+
+
+def _int32(num):
+	'''
+	This function will return the 32 least significant bits of the number given in
+	the input,converting it to a 32 bit integer.
+	Input:
+		- num: The number that will be converted.
+	Output:
+		- The 32 LSB's of this number.
+	'''
+	return (0xffffffff & num)
+
+class MT19937:
+
+	'''
+	In this class we will implement the algorithm for the mersenne twister 19937 PRNG.
+	The code of the algorithm was written by using the algorithm description from
+	wikipedia: https://en.wikipedia.org/wiki/Mersenne_Twister.
+	'''
+	def __init__(self,seed,internal_state = None):
+		'''
+		Constructor of the MT19937 class.
+		Inputs:
+			- seed: The seed we will use for the generator.
+			- internal_state: In the case we will create a "spliced" generator.
+		'''
+		#Initialize the index to 0.
+		self.index = 0
+		#Initialize the state vector.
+		if internal_state == None:
+			self.mt = [0] * 624
+			#Initial state will be the input seed.
+			self.mt[0] = seed
+			for i in range(1,624):
+				self.mt[i] = _int32(1812433253 * (self.mt[i - 1] ^ self.mt[i - 1] >> 30) + i)
+		else:
+			self.mt = internal_state
+			self.index = len(internal_state)
+
+	#This is also called the temper function.
+	def extract_number(self):
+		#Check if index passed the state vector's length.
+		if self.index >= 624:
+			self.twist()
+
+		# Extract current state.
+		y = self.mt[self.index]
+
+		# Right shift by 11 bits.
+		y ^= (y >> 1)
+		# Shift y left by 7 and take the bitwise and of 2636928640
+		y ^= (y << 7) & 2636928640
+		# Shift y left by 15 and take the bitwise and of y and 4022730752
+		y ^= (y << 15) & 4022730752
+		# Right shift by 18 bits.
+		y ^= (y >> 18)
+
+		#Increment the index.
+		self.index = self.index + 1
+
+		return _int32(y)
+
+	def twist(self):
+		for i in range(624):
+			#Get the most significant bit and add it to the least significant bits of the next number.
+			y = _int32((self.mt[i] & 0x80000000) + \
+							(self.mt[(i + 1) % 624] & 0x7fffffff))
+			self.mt[i] = self.mt[(i + 397) % 624] ^ y >> 1
+
+			if y % 2 != 0:
+				self.mt[i] = self.mt[i] ^ 0x9908b0df
+
+			#Initialize index back to 0.
+			self.index = 0
+
+#Test challenge21.
+if (num_set == 3 and num_challenge == 5):
+	'''
+	Implement the MT19937 Mersene twister RNG(random number generator).
+	We will next show that this PRNG is not cryptographically secure.
+	Here we will just test the MT19937 class(given a specific seed we will get the same sequence.)
+	'''
+	seed = 20
+	prng = MT19937(seed)
+	for i in range(20):
+		print "Current number: %d" % prng.extract_number()
+
+
+#Test challenge22.
+if (num_set == 3 and num_challenge == 6):
+	'''
+	Crack the MT19937 seed,we will proof that this PRNG is not cryptographically secure.
+	We will write a routine that will:
+		- Wait a random number of seconds at first (so the seed will be completely random at each execution)
+		- Get the current UNIX timestamp and use it as a seed for the RNG.
+		- Wait another random number of seconds.
+		- Output the first 32 bit integer extracted from the RNG.
+
+	This exercise emphasizes the fact that the seed dictates the whole sequence of integers that
+	are extracted from the RNG.
+	This is more of a timing attack than a real attack on the RNG.(the next challenge will introduce
+		a real way of attacking the RNG's algorithm)
+	Note: We will simulate the waiting time,to save time.
+	'''
+	seed = int(time.time()) + random.randint(40,1000)
+	print "Chose seed: %d" % seed
+	rng = MT19937(seed)
+	extracted_num = rng.extract_number()
+	curr_time = seed + random.randint(40,1000)
+	#Find the seed.
+	for i in range(curr_time - 1001,curr_time):
+		if MT19937(i).extract_number() == extracted_num:
+			print "Found the seed: %d" % i
+
+def untemper(num):
+	'''
+	This function receives the first number extracted from a MT19937 RNG and does 
+	the reverse operations of the MT19937.extract_number() function to receive the seed 
+	of the RNG. We will use this for challenge 7 of set 3.
+	We need to apply the reverse of two operations: shift and xor.
+	The reverse of xor is obvious because xor is a symmetric operation.
+	On the otherhand the case of shift is a little more complicated.
+	We will notice that for integers shift is not completely invertible because if we divide a
+	number by some power of two we will lose information(it may be odd or even) so for each use
+	of shift right there are 2 options we will have to go through while reversing it.
+	Input:
+		- num: The first 32 bit integer extracted from the RNG.
+	Output:
+		- The preceding number in the internal state(or some options).
+	'''
+	#Note:At first I will write the function as simple as possible to ignore bugs as much as I can
+	#later I will fix the code in order to save some lines and computations.
+	#Computations are a bit complicated.
+	#Extract all 3 parts.
+	first_part = ((2 ** 14 - 1) << 18) & num
+	second_part = ((2 ** 4 - 1) << 14) & num
+	third_part = (2 ** 14 - 1) & num
+	a1 = first_part
+	lsb_a2 = (a1 >> 18) ^ third_part
+	y = (a1 | second_part) | lsb_a2
+	#return _int32(y)
+	
+	#print "After first phase:%d" % y
+	
+
+	#Now invert: y ^= (y << 15) & 4022730752'
+	first_part = ((2 ** 15 - 1) << 17) & y
+	second_part = ((2 ** 2 - 1) << 15) & y
+	third_part = (2 ** 15 - 1) & y
+
+	#Compute part of b2.
+	part_b2 = (third_part << 15) & 4022730752
+	#Get two last bits of part_b2.
+	lsb_b2 = ((2 ** 2 - 1) << 15) & part_b2
+	msb_a2 = second_part ^ lsb_b2
+	a2 = msb_a2 | third_part
+	#Get full b2.
+	b2 = (a2 << 15) & 4022730752
+	a1 = first_part ^ (b2 & ((2 ** 15 - 1) << 17))
+	y = a1 | a2
+	#print "After second phase: %d" % y
+
+	#Now invert y ^= (y << 7) & 2636928640
+	#This one is going to be a bit more complex so I added a few lines of code
+	# in hope that it will make it more readable.(The code is based on hand written computations)
+	first_part = ((2 ** 7 -1) << 25) & y
+	second_part = ((2 ** 18 - 1) << 7) & y
+	third_part = (2 ** 7 - 1) & y
+
+	#Get last 7 bits of b2.
+	lsb_7_b2 = (third_part << 7) & 2636928640
+	#Get another 7 bits of a2 to get total last 14 bits of a2.
+	lsb_14_a2 = (second_part ^ lsb_7_b2) | third_part
+
+	#Now get last 14 bits of b2.
+	lsb_14_b2 = (lsb_14_a2 << 7) & 2636928640
+	lsb_21_a2 = (second_part ^ lsb_14_b2) | third_part
+	#Get last 21 bits of b2.
+	lsb_21_b2 = (lsb_21_a2 << 7) & 2636928640
+
+	#Get a2 completely.
+	a2 = (second_part ^ (((2 ** 18 - 1) << 7) & lsb_21_b2)) | third_part
+	b2 = (a2 << 7) & 2636928640
+	a1 = first_part ^ (((2 ** 7 - 1) << 25) & b2)
+	y = a1 | a2
+	#print "After third step:%d" % y
+
+	#Last part will be to invert y ^= (y >> 1)
+	msb_a1 = (2 ** 31) & y
+	second_part = ((2 ** 30 - 1) << 1) & y
+	third_part = 1 & y
+
+	a1 = msb_a1
+	#Figure iteratively a1.Go through each bit of the result of second_part
+	for i in range(30):
+		a1 |= (second_part ^ ((a1 & (2 **(31 - i))) >> 1)) & (2 ** (30 - i))
+
+	#Extract a2.
+	a2 = third_part ^ ((a1 & 2) >> 1)
+	y = a1 | a2
+	return y
+
+
+
+#Test challenge23.
+if (num_set == 3 and num_challenge == 7):
+	'''
+	Clone an MT19937 RNG from its output.
+	Now this is a challenge with more action.
+	The MT19937 RNG holds an internal state of 624 integers, the key of this attack is knowing
+	that the temper function used in extract_number is invertible(not completely because of 
+	the fact that we shift integers), we will write an untemper function that reverses the
+	temper function's operations. We will use this function to receive the full internal state
+	of the RNG and create a clone of it.
+	This attack can be prevented if we use some kind of one-way function before extracting a number
+	from the RNG like a cryptographic hash function.
+	'''
+	'''y = _int32(24253333522221)
+	print "Chose %d" % y
+	y ^= (y >> 1)
+	print "Now: %d" % y
+	y ^= ((y << 7) & 2636928640)
+	print "After first step: %d" % y
+	y ^= ((y << 15) & 4022730752)
+	print "After second step value: %d" % y
+	y ^=(y >> 18)
+	print "Got   %d" % untemper(y)'''
+	#Create a new MT199937 extract 624 outputs and use the untemper function to clone it.
+	rng = MT19937(50)
+	outputs = []
+	for i in range(624):
+		outputs.append(rng.extract_number())
+
+	#Use untemper function.
+	initial_state = []
+	for i in range(623,-1,-1):
+		initial_state = [untemper(outputs[i])] + initial_state
+
+	#Create "spliced" MT19937,when it is spliced the seed doesn't matter
+	cloned = MT19937(0,internal_state = initial_state) 
+	#Now check if we get the exact same numbers.
+	for i in range(100):
+		print "Original RNG extracted: %d" % rng.extract_number()
+		print "Clone extracted: 	   %d" % cloned.extract_number()
+
+
+
+def mt19937_stream_cipher(plaintext,seed):
+	'''
+	This function receives a plaintext and a 16 bit seed to create a keystream using
+	a MT19937 PRNG that will be used to create the ciphertext.
+	We will note that the output of the PRNG is a 32 bit integer,we will convert it to 4
+	characters in order to use the xor_strings function that we already wrote.
+	Inputs:
+		- plaintext: The text that will be encrypted.
+		- seed: 16 bit seed that will be used to create the PRNG.
+	Output:
+		- The produced ciphertext.
+	'''
+	#Take only 16 bits of the given seed.
+	rng = MT19937(seed & 0xffff)
+	num_blocks = int(math.ceil(float(len(plaintext)) / 4))
+	#Create the keystream.
+	keystream = ""
+	for i in range(num_blocks):
+		produced_num = rng.extract_number()
+		#Use struct module to convert integer to string.
+		keystream += struct.pack("<L",produced_num)
+	return xor_strings(plaintext,keystream)
+
+def test_password_token(token):
+	'''
+	Given some password reset token we will check if it was created using a PRNG seeded with the current
+	time,we will take a range eps before and after the time and check the products of all the prng's seeded
+	with these seeds.
+	We will assume the token is the first result extracted from the temper function of the PRNG,
+	otherwise it can be the 1000 extracted number from a prng and it will take a lot longer to discover
+	if the seed that was used is the current time.
+	Inputs:
+		- token: Some password reset token.
+	Outputs:
+		- True if the token is the result of PRNG seeded with current time,false otherwise.
+	'''
+	curr_time = int(time.time())
+	#Choose some random eps.
+	eps = 100
+	for i in range(curr_time - eps,curr_time + eps + 1):
+		curr_prng = MT19937(int(i))
+		#Extract a number and
+		if (curr_prng.extract_number() == token):
+			return True
+	return False
+
+#Test challenge24.
+if (num_set == 3 and num_challenge == 8):
+	'''
+	Create the MT19937 stream cipher and break it.
+	Turns out we can create a trivial stream cipher from any PRNG, we will just take the outputs of
+	the PRNG and use it as a keystream(in our case 32 bit outputs).
+	After writing the stream cipher function we will use it to encrypt a known plaintext with a 
+	random number of random byted prefixed to it.
+	Our goal will be to recover the seed from the ciphertext.
+	The important thing we will have to notice is that the seed contains ONLY 16 bits, therefore
+	the space of all possible seeds is quite small,because part of the plaintext is known we can
+	extract a block of the keystream(which is a number extracted from the PRNG).
+	'''
+	#Test the stream cipher.
+	plaintext = os.urandom(random.randint(1,100)) + 'A' * 14
+	seed = ord(os.urandom(1))
+	print "Secret seed chosen: %d" % seed
+	ciphertext = mt19937_stream_cipher(plaintext,seed)
+	#Count number of 4 byte blocks.
+	num_full_blocks = len(ciphertext) / 4
+	#Find last block of the keystream.
+	keystream = xor_strings(extract_keysize_block(ciphertext,num_full_blocks,4),
+							'A' * 4)
+	#Convert the keystream string back to a number.
+	keystream = struct.unpack("<L",keystream)[0]
+	print keystream
+	#Go over each possible seed and stop when we get to the seed that produces the same keystream.
+	for i in range(2 ** 16):
+		#Create a new MT19937 PRNG with the current seed.
+		curr_prng = MT19937(i)
+		for j in range(num_full_blocks):
+			num = curr_prng.extract_number()
+		#Compare to the number that we got.
+		if (num == keystream):
+			print "Found it %d" % i
+			break
+
+	'''
+	We will use the same idea to generate a "password reset token" using MT19937 seeded from the current time
+	and we will write a function that given some password token checks if it was created with a MT19937 PRNG 
+	seeded with the current time.
+	'''
+	#Test
+	print "Seed a MT19937 PRNG with the current time"
+	print "Function says: " + str(test_password_token(MT19937(int(time.time())).extract_number()))
+	print "Now testing for some random seed"
+	print "Function says: " + str(test_password_token(MT19937(ord(os.urandom(1))).extract_number()))
+
+#We will use a fixed nonce for the following challenge.(randomly we chose 0.)
+nonce = struct.pack("<Q",8)
+
+def edit_cipher(ciphertext,key,offset,newtext):
+	'''
+	This function will receive a ciphertext that was produced using a AES CTR encryption,a key
+	and some offset and will seek into the ciphertext to this offset and replace it with the encryption 
+	of newtext produced in the input.
+	Inputs:
+		- ciphertext: The cipher that was produced from AES CTR encryption.
+		- key: The key that was used while encrypting(unknown to attacker)
+		- offset: The offset we will seek to.
+		- newtext: The text we will use to edit the ciphertext.
+	Output:
+		- new edited ciphertext based on the given newtext and the offset.
+	'''
+	if (offset >= len(ciphertext)):
+		raise ValueError("Offset is out of bounds in edit_cipher")
+	#There is no reason to edit the ciphertext to be longer,it doesn't help us get any additional information.
+	if (offset + len(newtext) > len(ciphertext)):
+		raise ValueError("newtext given is too long in edit_cipher")
+	#Decrypt the ciphertext.
+	plaintext = AES_CTR(ciphertext,key,nonce)
+	#Change the text to newtext at the given offset.
+	edited_plaintext = plaintext[:offset] + newtext
+	#Test if the newtext covers the rest of the ciphertext length.
+	if (offset + len(newtext) < len(ciphertext)):
+		edited_plaintext += plaintext[offset + len(newtext):]
+	#Encrypt after getting the original plaintext edited.
+	return AES_CTR(edited_plaintext,key,nonce)
+
+#Test challenge25.
+if (num_set == 4 and num_challenge == 1):
+	'''
+	Break random access read/write AES CTR.
+	In this challenge we will check out another weakness of AES in CTR mode,notice that not like
+	the case of CBC encryption,in CTR mode we can acces the Nth byte of the ciphertext by only 
+	have the Nth byte of the keystream.
+	In this scenario we will assume the attacker can use some sort of API that gives him the option
+	to edit the ciphertext at some given offset without knowing the original plaintext or the key.
+	By using this API the attacker can simply guess each byte of the plaintext by editing each character
+	in the plaintext and check which value of newtext produces the same value of ciphertext that he got
+	in the first place.
+	Note: This solution might seem a bit slow but the time it takes is bearable(about 10 minutes) so you
+	can go ahead and make a good cup of coffee until it's done.
+	'''
+	my_file = file("set4challenge1.txt","r")
+	#Read all the plaintexts.	
+	plaintext = AES_ECB_decrypt(base64.b64decode(my_file.read()),"YELLOW SUBMARINE")
+	#We will use the random key saved in unknown_key variable.
+	ciphertext = AES_CTR(plaintext,unknown_key,nonce)
+	found_plaintext = ""
+	#Now the attacker will discover one byte at a time using the edit function.
+	for i in range(len(plaintext)):
+		#Check all byte values.
+		for guess in range(256):
+			edited_ciphertext = edit_cipher(ciphertext,unknown_key,i,chr(guess))
+			if (edited_ciphertext == ciphertext):
+				#Means we found one byte of the plaintext.
+				found_plaintext += chr(guess)
+				break
+		print "Found so far %s" % found_plaintext
+	print "Found plaintext: %s" % found_plaintext
+
+def prefix_suffix_ctr(plaintext,key,nonce):
+	'''
+	Encrypt under CTR mode using the given plaintext,key and nonce, we will prefix 
+	and suffix specific strings to each plaintext that is given in the input before encryption.
+	This is simply one line of code but this makes the code more readable.
+	Same as challenge16 we will prevent using ; and = characters in the plaintext.
+	'''
+	return AES_CTR(prepend_str + plaintext.replace("=","").replace(";","") + append_str,key,nonce)
+
+def ctr_bitflip_attack(key,nonce,target_block):
+	'''
+	This function performs a bitflip attack on ctr mode.
+	It will be pretty similar to the way we attacked cbc mode.
+	We will find out the number of 16 byte blocks produced by the prefix and suffix
+	strings,we will use the fact that as an attacker we know of the prefix and suffix strings.
+	'''
+	#If target block contains ; = characters,we know that these character are filtered.
+	#We will replace these characters with out own character and use the edit function that we wrote earlier.
+	offsets = {}
+	prefix_len = len(prepend_str)
+	for i in range(len(target_block)):
+		#I already wrote code to find the length of prefix string(nothing special).
+		#In order to save some lines of code that isn't the main aspect of this challenge 
+		#we will assume we have this length and we will add it to the offsets.
+		if (target_block[i] == '='):
+			offsets[i + prefix_len] = '='
+			target_block = target_block[:i] + chr(0) + target_block[i + 1 :]
+		elif (target_block[i] == ';'):
+			offsets[i + prefix_len] = ';'
+			target_block = target_block[:i] + chr(0) + target_block[i + 1:]
+	#Now simply use the edit function.
+	curr_cipher = prefix_suffix_ctr(target_block,key,nonce)
+	for offset,char in offsets.iteritems():
+		curr_cipher = edit_cipher(curr_cipher,key,offset,char)
+	#Check out the result to see if admin = true slipped in there.
+	print AES_CTR(curr_cipher,key,nonce)
+
+
+#Test challenge26.
+if (num_set == 4 and num_challenge == 2):
+	'''
+	CTR bitflipping.
+	We will reimplement the attack we performed on CBC mode in challenge16 to show that
+	CTR is vulnerable to bitflipping attacks as well.
+	'''
+	#16 byte target block.
+	target_block = ";admin=true;" + 'A' * 4
+	ctr_bitflip_attack(unknown_key,nonce,target_block)
