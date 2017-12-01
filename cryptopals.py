@@ -1,3 +1,4 @@
+# coding: utf-8
 '''Implementation of the cryptopals crypto challenges.
 The program will get TWO command line arguments.
 The first argument will represent the number of set of the crypto challenges
@@ -496,6 +497,22 @@ if (num_set == 2 and num_challenge == 1):
 		print("SUCCESS")
 
 
+def is_ascii(string):
+	'''
+	Validates ascii compliance for given input string.
+	Input:
+		- Some string.
+	Output:
+		- True if it is ascii encoded,false otherwise.
+	'''
+	try:
+		string.decode("ascii")
+	except UnicodeDecodeError:
+		return False
+	else:
+		return True
+
+
 def AES_CBC_dec(ciphertext,key,iv):
 	'''
 	In this function we will implement the decryption process of AES in CBC mode
@@ -508,22 +525,28 @@ def AES_CBC_dec(ciphertext,key,iv):
 	#print "In decryption got ciphertext:%s number of blocks%d" % (ciphertext,num_blocks)
 	#Only do this if there is more than one block.
 	if num_blocks > 1:
-		for i in range(num_blocks,0,-1):
+		for i in range(num_blocks,1,-1):
 			current_ciphertext_block = extract_keysize_block(ciphertext,i,len(key))
 			curr_block = xor_strings(AES_ECB_decrypt(current_ciphertext_block,key),
 								extract_keysize_block(ciphertext,i - 1,len(key)))
 			plaintext = curr_block + plaintext
 	#For the last block we will use the IV.
-	curr_block = xor_strings(AES_ECB_decrypt(extract_keysize_block(ciphertext,0,len(key)),key),iv)
+	curr_block = xor_strings(AES_ECB_decrypt(extract_keysize_block(ciphertext,1,len(key)),key),iv)
 	return (curr_block + plaintext)
 
-def AES_CBC_enc(plaintext,key,iv):
+def AES_CBC_enc(plaintext,key,iv,check_encoding = False):
 	'''
 	Implementation of encryption process of AES in CBC mode.
 	We will use the function that we wrote for AES encryption in AES mode.
+	We will add additional code that checks if the given plaintext has ascii compliance,if 
+	it doesn't we will raise an exception.
+	The check_encoding input value tells us if there is any need to check the plaintext's encoding
+	(in the challenges later we may be asked to validate ascii encoding.)
 	Input:plaintext,the key and the iv that we will use.
 	Output:The ciphertext.
 	'''
+	if (check_encoding and not is_ascii(plaintext)):
+		raise ValueError("Plaintext in AES_ECB_enc is not ascii encoded")
 	ciphertext = ""
 	#Append with PKCS#7 if needed.
 	plaintext = PKCS7(plaintext,len(key))
@@ -536,6 +559,7 @@ def AES_CBC_enc(plaintext,key,iv):
 							extract_keysize_block(ciphertext,i,len(key))),key)
 		ciphertext += curr_block
 	return ciphertext
+
 
 #Test challenge10.
 if (num_set == 2 and num_challenge == 2):
@@ -863,13 +887,15 @@ if (num_set == 2 and num_challenge == 7):
 prepend_str = "comment1=cooking%20MCs;userdata="
 append_str = ";comment2=%20like%20a%20pound%20of%20bacon"
 
-def cbc_enc_prepend_append(plaintext,key,iv):
+def cbc_enc_prepend_append(plaintext,key,iv,iv_as_key = False):
 	'''
 	Encrypt with CBC mode where we append and prepend the prepend_str and append_str.
-	Input:Plaintext and the key.
+	Input:Plaintext and the key and the iv,the iv_as_key indicates if iv and key will be equal or not.
 	Output:The produced cipher text.
 	'''
 	#Quote out "=" and ";" characters
+	if (iv_as_key):
+		iv = key
 	new_plaintext = (prepend_str + plaintext + append_str).replace(";","").replace("=","")
 	return AES_CBC_enc(new_plaintext,key,iv)
 
@@ -1509,6 +1535,7 @@ if (num_set == 3 and num_challenge == 7):
 	y ^=(y >> 18)
 	print "Got   %d" % untemper(y)'''
 	#Create a new MT199937 extract 624 outputs and use the untemper function to clone it.
+	print "We will print out comparisons between the original PRNG and the clonged PRNG"
 	rng = MT19937(50)
 	outputs = []
 	for i in range(624):
@@ -1668,6 +1695,7 @@ if (num_set == 4 and num_challenge == 1):
 	Note: This solution might seem a bit slow but the time it takes is bearable(about 10 minutes) so you
 	can go ahead and make a good cup of coffee until it's done.
 	'''
+	print "Print out the found plaintext after each byte found using a brute-force solution."
 	my_file = file("set4challenge1.txt","r")
 	#Read all the plaintexts.	
 	plaintext = AES_ECB_decrypt(base64.b64decode(my_file.read()),"YELLOW SUBMARINE")
@@ -1730,7 +1758,49 @@ if (num_set == 4 and num_challenge == 2):
 	CTR bitflipping.
 	We will reimplement the attack we performed on CBC mode in challenge16 to show that
 	CTR is vulnerable to bitflipping attacks as well.
+	We can even say that it is easier to perform a bitflip attack in CTR mode than in CBC mode,
+	in the previous challenge we showed that we can easily seek forward into the ciphertext in CTR
+	mode by using the edit_cipher function that we wrote,we can use this function to perform a much simpler
+	bitflipping attack than the one that was performed when we used CBC mode.
 	'''
 	#16 byte target block.
+	print "Running the bitflip attack on AES in CTR mode."
 	target_block = ";admin=true;" + 'A' * 4
+	print "The payload block will be: %s" % target_block
 	ctr_bitflip_attack(unknown_key,nonce,target_block)
+
+
+#Test challenge27.
+if (num_set == 4 and num_challenge == 3):
+	'''
+	Recover key from CBC with key=IV.
+	In this challenge we will show why using the same value for the key and iv under CBC mode can 
+	be insecure.
+	We will take some 3 block sized message : P1-P2-P3 and encrypt it by using the same value for the key
+	and the iv receiving: C1-C2-C3.
+	Now as the attacker we will modify the ciphertext to fit the following format: C1-0-C1(0 means BLOCKSIZE of null bytes).
+	By decrypting this ciphertext we can completely find the value of the key which is simply the iv.
+	Why? 
+	Because we can discover the intermediate mode of C1.Let's call the plaintext blocks received from the edited
+	ciphertext P1'-P2'-P3',we can see that:
+	P3' = decrypt(C1) XOR 0 = decrypt(C1)
+	P1' = decrypt(C1) XOR IV  ==> therefore: IV = P1' XOR decrypt(C1) = P1' XOR P3'
+	So we will simply compute the value of the IV(very easily)
+	'''
+	print "We will show why using the same value for the key and iv can be insecure."
+	print "Your secret key: %s" % unknown_key
+	plaintext = "key=iv insecure " * 3
+	ciphertext = AES_CBC_enc(plaintext,unknown_key,unknown_key,check_encoding = True)
+	#Modify the ciphertext.
+	C1 = extract_keysize_block(ciphertext,1,BLOCKSIZE)
+	modified_cipher = C1 + chr(0) * BLOCKSIZE + C1
+	modified_plaintext  = AES_CBC_dec(modified_cipher,unknown_key,unknown_key)
+	#Compute the key.
+	key = xor_strings(extract_keysize_block(modified_plaintext,1,BLOCKSIZE),
+						 extract_keysize_block(modified_plaintext,3,BLOCKSIZE))
+	#Check if we got it right.
+	if (key == unknown_key):
+		print "Guess what the attacker found: %s" % key
+		print "Moohaha I found the key,I am going to rule this planet."
+
+		
