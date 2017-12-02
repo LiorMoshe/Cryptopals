@@ -15,6 +15,7 @@ import sys
 import random
 import struct
 import time
+from sha1 import sha1
 from collections import OrderedDict
 
 '''This dictionary will hold all statistical information about frequency of letters and their combinations
@@ -1803,4 +1804,112 @@ if (num_set == 4 and num_challenge == 3):
 		print "Guess what the attacker found: %s" % key
 		print "Moohaha I found the key,I am going to rule this planet."
 
-		
+#Challenge28.Read sha1 secret key from usr/share/dict/words
+def sha1_secret_mac(message,key):
+	'''
+	Implement a SHA-1 keyed MAC.
+	Information about the SHA1 algorithm: https://tools.ietf.org/html/rfc3174
+	The implementation of the SHA1 algorithm was taken from: https://github.com/ajalt/python-sha1
+	This is used for message authentication,if one bit of data changes in the message 
+	the hash returned from the SHA1 algorithm completely changed,this is the so called
+	avalanche effect.
+	'''
+	return sha1(key + message)
+
+#Challenge28
+if (num_set == 4 and num_challenge == 4):
+	print "There is nothing to test in challenge28,it's just an implementation."
+
+def sha1_padding(message):
+	'''
+	Generates the needed padding for a given sha1 message.
+	We will assume the message length can be written using 2 words(8 bytes).
+	We will use big endian format to not differentiate from the implementation
+	in sha1.py
+	Input:
+		- The message we will use sha1 to authenticate.
+	Output:
+		- String of padding.
+	'''
+	#Check if message can be divides to 64 byte blocks.If so there is no padding
+	if (len(message) % 64 == 0):
+		return ""
+	#Append message to 64 bytes.We multiply the length by 8 because we need to
+	# interpret the BIT length and not the BYTE length.
+	padding = b'\x80' + b'\x00' * ((56 - (len(message) + 1) %64) % 64) + \
+				struct.pack(b'>Q',(len(message) * 8))
+	return padding
+
+def verify_mac(message,mac,key):
+	'''
+	This will be the function that is ran over a user when we wish to 
+	authenticate a message given the message and the produced mac.
+	Inputs:
+		- message: The message that the MAC was produced for.
+		- mac: Authentication code that helps the user to validate the message.
+		- key: secret prefix key that was agreed upon before the connection.
+	Output:
+		- True if it's valid,false otherwise.
+	'''
+	#print "Input"
+	#print mac
+	secret_mac = sha1_secret_mac(message,key)
+	#print "Got"
+	#print secret_mac
+	return (mac == secret_mac)
+#Challenge29.
+if (num_set == 4 and num_challenge == 5):
+	'''
+	Break a SHA-1 keyed MAC using length extension.
+	Turns out secret prefix SHA-1 MACs are breakable.
+	The main idea that this attack is based on is that we can take the output from
+	the SHA-1 algorithm and pass it through the algorithm again,therefore we feed more data
+	by taking some output hash value.
+	The attack will be that we will be able to generate a valid MAC without knowing
+	the secret key that the user is using to generate a message that gives us
+	certain previleges(like admin=true).We will do it by first guessing the length of
+	the key that was used(because each key length derives different sha-1 padding).
+	From the attacker standpoint,we can see the MAC of the original message sent from
+	some user but we don't know the secret prefix key(we don't even know it's length).
+	Steps of the attack:
+	1. Get the SHA-1 digest of the true message and split it to 5 words.
+	2. For each guess of the length of the key prepend key padding to the original
+	message and apply sha-1 padding,i.e. for the message labled "original message"
+	we will get 'A' * keylength + original message + sha-1 padding.
+	3. Pass in the internal state words calculated in step 1 to a new sha-1 and add the 
+	extension data we wish to pass(in our case ;admin=true;)
+	Note:The secret key will be a randomly chosen words from the usr/share/dict/words file.
+	We will check all word lengths up to 20 bytes.(This is an assumption to save
+		some time,in a real attack we will have to check a larger interval).
+	'''
+	original_message = "comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon"
+	#Read secret key from usr/share/dict/words.
+	words = open("words","r").readlines()
+	secret_key = words[random.randint(0,len(words) - 1)].replace("\n",'')
+	#Get MAC of original message.
+	original_mac = sha1_secret_mac(original_message,secret_key)
+	#Now as the attacker seperate the mac to 5 words.
+	sha1_registers = (int(original_mac[0:8],16),
+					 int(original_mac[8:16],16),
+					 int(original_mac[16:24],16),
+					 int(original_mac[24:32],16),
+					 int(original_mac[32:],16))
+	extension_message = ";admin=true"
+	#Run over all key lengths.
+	for keylen in range(20):
+		#keylen bytes precedes the original message.
+		curr_message = 'A' * keylen + original_message
+		#Compute the required padding for current value of keylen.
+		padding = sha1_padding(curr_message)
+		total = curr_message + padding
+		#Create our forged message,take the message and the required padding and add the extension.
+		forged_message = curr_message + padding + extension_message
+		#Get mac of new forged message.Use saved sha1_registers and
+		# skip the right amont of bytes(length of the string saved in total).
+		forged_mac = sha1(forged_message,sha1_registers,len(total))
+		total_message = original_message + padding + extension_message
+		#Check if the forged_mac is verified,if so we got admin privileges.
+		if (verify_mac(total_message ,forged_mac,secret_key)):
+			print "Got my message authenticated:%s" % (total_message)
+
+
