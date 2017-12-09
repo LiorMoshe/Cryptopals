@@ -16,6 +16,7 @@ import random
 import struct
 import time
 from sha1 import sha1
+from md4 import *
 from collections import OrderedDict
 
 '''This dictionary will hold all statistical information about frequency of letters and their combinations
@@ -1820,7 +1821,25 @@ def sha1_secret_mac(message,key):
 if (num_set == 4 and num_challenge == 4):
 	print "There is nothing to test in challenge28,it's just an implementation."
 
-def sha1_padding(message):
+
+
+def verify_mac(func,message,mac,key):
+	'''
+	This will be the function that is ran over a user when we wish to 
+	authenticate a message given the message and the produced mac.
+	Inputs:
+		- message: The message that the MAC was produced for.
+		- mac: Authentication code that helps the user to validate the message.
+		- key: secret prefix key that was agreed upon before the connection.
+	Output:
+		- True if it's valid,false otherwise.
+	'''
+	secret_mac = func(key + message)
+	print "Secret %s" % secret_mac.encode("hex")
+	print "mac %s" % mac.encode("hex")
+	return (mac == secret_mac)
+
+def test_sha1_padding(message):
 	'''
 	Generates the needed padding for a given sha1 message.
 	We will assume the message length can be written using 2 words(8 bytes).
@@ -1840,23 +1859,7 @@ def sha1_padding(message):
 				struct.pack(b'>Q',(len(message) * 8))
 	return padding
 
-def verify_mac(message,mac,key):
-	'''
-	This will be the function that is ran over a user when we wish to 
-	authenticate a message given the message and the produced mac.
-	Inputs:
-		- message: The message that the MAC was produced for.
-		- mac: Authentication code that helps the user to validate the message.
-		- key: secret prefix key that was agreed upon before the connection.
-	Output:
-		- True if it's valid,false otherwise.
-	'''
-	#print "Input"
-	#print mac
-	secret_mac = sha1_secret_mac(message,key)
-	#print "Got"
-	#print secret_mac
-	return (mac == secret_mac)
+
 #Challenge29.
 if (num_set == 4 and num_challenge == 5):
 	'''
@@ -1896,7 +1899,10 @@ if (num_set == 4 and num_challenge == 5):
 					 int(original_mac[32:],16))
 	extension_message = ";admin=true"
 	#Run over all key lengths.
+	func = lambda x: sha1(x)
 	for keylen in range(20):
+		if (keylen == len(secret_key)):
+			print "SIGNAL SIGNAL SIGNAL SIGNAL" * 3
 		#keylen bytes precedes the original message.
 		curr_message = 'A' * keylen + original_message
 		#Compute the required padding for current value of keylen.
@@ -1909,7 +1915,63 @@ if (num_set == 4 and num_challenge == 5):
 		forged_mac = sha1(forged_message,sha1_registers,len(total))
 		total_message = original_message + padding + extension_message
 		#Check if the forged_mac is verified,if so we got admin privileges.
-		if (verify_mac(total_message ,forged_mac,secret_key)):
+		if (verify_mac(func,total_message ,forged_mac,secret_key)):
 			print "Got my message authenticated:%s" % (total_message)
 
+
+#Challenge30.
+if (num_set == 4 and num_challenge == 6):
+	'''
+	Implement the same attack on MD4 algorithm.
+	More about MD4: https://tools.ietf.org/html/rfc1320
+	This time I implemented the full md4 algorithm in md4.py
+	1.Get the digest of the original message and save the 4 MD4 registers that 
+	are given in this mac.
+	2.Iterate over all possible key lengths and do:
+		2.1. For the current key length find the needed MD4 padding using
+			 the sha1_padding function(sha1 and md4 use the same padding scheme)
+	    2.2. Add the extension_message which is our payload.
+	'''
+	original_message = "comment1=cooking%20MCs;userdata=foo;comment2=%20like%20a%20pound%20of%20bacon"
+	#Read secret key from usr/share/dict/words.
+	words = open("words","r").readlines()
+	secret_key = words[random.randint(0,len(words) - 1)].replace("\n",'')
+	#Get MAC of original message.
+	original_mac = MD4().md4(secret_key + original_message)
+	#Unpack the string of the mac to 4 unsigned integers.
+	original_mac = struct.unpack(">4I",original_mac)
+	print "Mac"
+	print original_mac
+	#Save md4 registers.
+	md4_registers = [original_mac[0],
+					 original_mac[1],
+					 original_mac[2],
+					 original_mac[3]]
+	print md4_registers
+
+	extension_message = ";admin=true"
+	#Define the function that receives a message and returns it's md4 hash value.
+	func = lambda x: MD4().md4(x)
+	#Loop over all possible key lengths.
+	for keylen in range(20):
+		#keylen bytes precedes the original message.
+		if (len(secret_key) == keylen):
+			print "SIGNAL SIGNAL SIGNAL SIGNAL" * 3
+		curr_message = 'A' * keylen + original_message
+		#Compute the required padding for current value of keylen.
+		padding = sha1_padding(curr_message)
+		total = curr_message + padding
+		#Create our forged message,take the message and the required padding and add the extension.
+		forged_message = curr_message + padding + extension_message
+		#Get mac of new forged message.Use saved sha1_registers and
+		# skip the right amont of bytes(length of the string saved in total).
+		print "ATTACK"
+		forged_mac = MD4(registers = md4_registers,
+					message_byte_length = len(total)).md4(forged_message)
+		print "Forged %s" % forged_mac.encode("hex")
+		#forged_mac = sha1(forged_message,sha1_registers,len(total))
+		total_message = original_message + padding + extension_message
+		#Check if the forged_mac is verified,if so we got admin privileges.
+		if (verify_mac(func,total_message ,forged_mac,secret_key)):
+			print "Got my message authenticated:%s" % (total_message)
 
