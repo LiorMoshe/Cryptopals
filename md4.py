@@ -21,7 +21,7 @@ def H(x,y,z):
 	return x ^ y ^ z
 
 
-def sha1_padding(message):
+def sha1_padding(message,mode = "@"):
 	'''
 	Generates the needed padding for a given sha1 message.
 	We will assume the message length can be written using 2 words(8 bytes).
@@ -30,6 +30,10 @@ def sha1_padding(message):
 	Note:This is the same padding that is used for MD4.
 	Input:
 		- The message we will use sha1 to authenticate.
+		- The mode that we will use to pack the data:
+			@: means native(based on the machine that is executing this code)
+			>: Big endian.
+			>: Little endian
 	Output:
 		- String of padding.
 	'''
@@ -40,13 +44,15 @@ def sha1_padding(message):
 	#Append message to 64 bytes.We multiply the length by 8 because we need to
 	# interpret the BIT length and not the BYTE length.
 	padding = b'\x80' + b'\x00' * ((56 - (len(message) + 1) %64) % 64) + \
-				struct.pack(b'>Q',(len(message) * 8))
+				struct.pack(mode + 'Q',(len(message) * 8))
 	return padding
 
 def general_round(h,X,func,s_vals,k_update_rule,constant = 0):
 	'''
 	General function for one round of md4.
 	'''
+	#Save h in list format instead of tuple format to allow changes.
+	h = [h[i] for i in range(len(h))]
 	for j in range(16):
 		register_index = (16 - j) % 4
 		#Take s from given s_vals.
@@ -60,7 +66,8 @@ def general_round(h,X,func,s_vals,k_update_rule,constant = 0):
 															 h[(register_index + 3) % 4]
 															) + X[k] + constant) % 2 ** 32
 												,s)
-	return h
+	#We know that in md4 there are exactly 4 registers.
+	return h[0],h[1],h[2],h[3]
 
 
 class MD4(object):
@@ -73,10 +80,10 @@ class MD4(object):
 		'''
 		#Set registers to initialization values.
 		if (registers == None):
-			self._h = [0x67452301,
+			self._h = (0x67452301,
 	                0xefcdab89,
 	                0x98badcfe,
-	                0x10325476]
+	                0x10325476)
 		else:
 			self._h = registers
 		#Save the bytes of the message passed through so far.
@@ -88,6 +95,7 @@ class MD4(object):
 		BB = self._h[1]
 		CC = self._h[2]
 		DD = self._h[3]
+		h = [0] * 4
 		#Round one.
 		self._h = general_round(h = self._h,X = chunk,func = F,s_vals = (3,7,11,19),
 			k_update_rule = lambda x: x)
@@ -99,10 +107,13 @@ class MD4(object):
 		self._h = general_round(self._h,chunk,func = H,s_vals = (3,9,11,15),
 			k_update_rule = lambda x: k_vals[x],constant = 0x6ED9EBA1)
 		#Update internal vector.
-		self._h[0]  = (self._h[0] + AA) % 2 ** 32
-		self._h[1]  = (self._h[1] + BB) % 2 ** 32
-		self._h[2]  = (self._h[2] + CC) % 2 ** 32
-		self._h[3]  = (self._h[3] + DD) % 2 ** 32	
+		#Because we can't change values of the tuple we will change the value of the reference.
+		h[0]  = (self._h[0] + AA) % 2 ** 32
+		h[1]  = (self._h[1] + BB) % 2 ** 32
+		h[2]  = (self._h[2] + CC) % 2 ** 32
+		h[3]  = (self._h[3] + DD) % 2 ** 32
+		#Change the reference of self._h
+		self._h = (h[0],h[1],h[2],h[3])
 
 	def md4(self,data):
 		'''
@@ -124,7 +135,7 @@ class MD4(object):
 				
 				self.process_chunk(curr_block)
 				self._message_byte_length += 64
-			#Now apply sha1 padding.data
+		#Now apply sha1 padding.data
 		padding = sha1_padding(data)
 		#Compute for last block.
 		last_block = data_left[-remainder:] + padding
@@ -133,7 +144,7 @@ class MD4(object):
 			self.process_chunk(struct.unpack("@16I",last_block[:64]))
 			last_block = last_block[64:]
 		self.process_chunk(struct.unpack("@16I",last_block))
-		return struct.pack("@4I", *self._h)
+		return struct.pack("@4I", *self._h).encode("hex")
 
 if __name__=="__main__":
 	"Testing code taken from https://gist.github.com/bonsaiviking/5644414"
@@ -148,7 +159,7 @@ if __name__=="__main__":
         )
 	for t, h in test:
 		result = MD4().md4(t)
-		if result == h.decode("hex"):
+		if result == h:
 			print "pass"
 		else:
 			print "FAIL: {0}: {1}\n\texpected: {2}".format(t, result, h)
