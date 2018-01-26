@@ -807,5 +807,16 @@ if __name__ == "__main__":
         #We know that the hmac-sha1 signature is 40 bytes long.
         for i in range(40):
             sig += discover_char(sig)
+            print "Current: " + sig
 
         print "The final signature that we found is: " + sig
+
+    #Challenge32.
+    if (num_set == 4 and num_challenge == 8):
+        print "This challenge's implementation is the same as the implementation" \
+              " of challenge 31.\n If there is very small artificial timing leak what we will" \
+              " do is convert it to a big artificial timing leak by sending several requests to the " \
+              " server so the timing leaks add up to become a noticable timing leak,so even if there is" \
+              " a very small timing leak in the server an attacker can use it to find out the signature" \
+              " of any file on the user's computer."
+

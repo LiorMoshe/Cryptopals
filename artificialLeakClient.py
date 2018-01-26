@@ -12,6 +12,9 @@ import time
 #The name of the file that we look for it's signature.
 FILE_NAME = "foo"
 
+#The number of requests sent to the server(in case of minimal timing leak).
+NUM_REQUESTS = 20
+
 #The url we will turn to.
 URL = "http://localhost:8080/test?file=" + FILE_NAME + "&signature="
 
@@ -33,7 +36,12 @@ def discover_char(found_sig):
     for i in range(16):
         curr_char = num_to_hex(i)
         start_time = time.time()
-        response = urlopen(curr_url + curr_char)
+
+        #Send NUM_REQUESTS requests to the server.
+        for j in range(NUM_REQUESTS):
+            response = urlopen(curr_url + curr_char)
+
+        #Compute the total time taken for all the requests.
         total_time = time.time() - start_time
 
         #Test if the time taken is longer.
