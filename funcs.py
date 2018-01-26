@@ -997,7 +997,6 @@ def hmac(hash_function,key,data,block_size):
 					  and operates the compression function on.
 	'''
 	#Define the constants ipad and opad based on the block size used in hash_function
-	print "Here in hmac like a boss"
 	ipad = chr(0x36) * block_size
 	opad = chr(0x5c) * block_size
 

@@ -785,8 +785,27 @@ if __name__ == "__main__":
 		In short: The HMAC's algorithm is built so that it wouldn't be possible
 		to use length extension attacks like the ones we did in previous challenges.
 		RFC: https://tools.ietf.org/html/rfc2104
-
+		In this challenge the server that is implemented in artificialLeakServer.py will create a web
+		server that allows the user to enter via the URL two inputs:
+		    -The name of the file that we will calculate it's hash.
+		    -The hash value that we think this file has.
+		We will show that if there are timing leaks in the server(i.e. the insecure_compare
+		function in artificialLeakServer.py) we can find out the hash of any file.
+	    Assuming that we know there is a HMAC-SHA1 ran in the server(this means the output
+	    is of size 20 bytes).
+        The code for the server that has the artificial timing leak is in artificalLeakServer.py
+        and it is implemented using web.py framework.
+        The code of the attacker that uses the timing leak in the server in order to find
+        out the secret signature is in artificialLeakClient.py.
 		'''
-        func = lambda x: sha1(x)
-        res = hmac(sha1, "lior the king", "hash me like a boss", 16)
-        print res
+        from artificialLeakClient import discover_char
+
+        print "Challenge31:Implement and break HMAC-SHA1 using an artificial timing leak."
+
+        sig = ""
+
+        #We know that the hmac-sha1 signature is 40 bytes long.
+        for i in range(40):
+            sig += discover_char(sig)
+
+        print "The final signature that we found is: " + sig
