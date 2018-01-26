@@ -24,7 +24,7 @@ def insecure_compare(first,second):
     try:
         for i in range(len(first)):
             #Sleep 50 ms in eacg iteration.
-            sleep(0.05)
+            sleep(0.001)
             if (first[i] != second[i]):
                 return 500
     except IndexError:
